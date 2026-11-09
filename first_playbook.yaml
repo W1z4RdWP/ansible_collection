@@ -1,0 +1,175 @@
+---
+- name: First play
+  hosts: all
+  become: true
+
+  vars:
+    USER: kuznetcovva
+    USER_HOME: "/home/{{ USER }}"
+    USER_GROUP: devops
+
+  tasks:
+    - name: update packages
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: install fortune & cowsay
+      ansible.builtin.apt:
+        name:
+          - cowsay
+          - fortune-mod
+        state: present
+
+    - name: Create group "{{ USER_GROUP }}"
+      ansible.builtin.group:
+        name: "{{ USER_GROUP }}"
+        state: present
+
+    - name: Create user "{{ USER }}"
+      ansible.builtin.user:
+        name: "{{ USER }}"
+        group: devops
+        create_home: yes
+        shell: /bin/bash
+        state: present
+
+    - name: Creare devops direcory
+      file:
+        path: "{{ USER_HOME }}/devops_dir"
+        state: directory
+        group: "{{ USER_GROUP }}"
+        owner: "{{ USER }}"
+        mode: '0474'
+
+    - name: Create file in devops directory
+      copy:
+        dest: "{{ USER_HOME }}/devops_dir/my_devops_file.txt"
+        mode: '0770'
+        content: |
+          This is my first file
+          Don't be too serious judging me!
+          THANK YOU
+
+
+- name: Advanced play
+  hosts: advanced_group
+  become: true
+  vars:
+    user_dirs:
+      - "/home/kuznetcovva"
+      - "/home/user1"
+      - "/home/user2"
+      - "/home/user3"
+    user_list:
+      - "kuznetcovva"
+      - "user1"
+      - "user2"
+      - "user3"
+  tags: advanced
+  tasks:
+    - name: Ensure directory exists
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop: "{{ user_dirs }}"
+    - name: Make Auth Script
+      copy:
+        dest: "/usr/local/bin/backup_home"
+        mode: '0770'
+        content: |
+          #!/usr/bin/env bash
+          if [ -z "$1" ]; then
+            echo "Ошибка! Не передано ни одного аргумента"
+            echo "Использование: $0 <username>"
+            exit 1
+          fi
+
+          username=$1
+          if [ -d "/home/$username" ]; then
+            CURRENT_DATE=$(date +"%d_%m_%H-%M")
+            BACKUP_PATH="/backups/$username/backup_$CURRENT_DATE"
+          else
+            echo "Каталога пользователя $username не существует!"
+            exit 1
+          fi
+
+          if [ ! -d "$BACKUP_PATH" ]; then
+            if [ ! -d "/backups/$username" ]; then
+              echo "Каталог /backups не обнаружен. Создаю..."
+              mkdir -p "/backups/$username"
+              chown "$username":"$username" "/backups/$username"
+            fi
+
+            echo "Создаю бэкап файлов каталога /home/$username"
+            tar -czf "$BACKUP_PATH.tar.gz" /home/"$username" && echo "Бэкапирование завершено успешно!" || echo "Возникла ошибка при создании бэкапа."
+          else
+            echo "Бэкап уже существует! Операция отменена."
+          fi
+
+    - name: Create txt file in users' home directories
+      copy:
+        dest: "{{ item }}/default.txt"
+        mode: '0777'
+        content: >
+          Epic file
+          for epic
+          users
+      loop: "{{ user_dirs }}"
+
+    - name: Create groups for new users
+      group:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ user_list }}"
+
+    - name: Create new users
+      user:
+        name: "{{ item }}"
+        group: "{{ item }}"
+        create_home: true
+        shell: /bin/bash
+        state: present       
+      loop: "{{ user_list }}"
+
+    - name: Create systemd unit for backup_home script
+      copy:
+        dest: "/etc/systemd/system/backup_home@.service"
+        content: |
+          [Unit]
+          Description=Backup directory /home/user service
+          
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/backup_home %i
+
+    - name: Enable and start systemd service
+      systemd_service:
+        name: "backup_home@{{ item }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop: "{{ user_list }}"
+
+    - name: Create systemd timer for backup_home script
+      copy:
+        dest: "/etc/systemd/system/backup_home@.timer"
+        content: |
+          [Unit]
+          Description=Timer for backup_home service
+
+          [Timer]
+          # Запускать каждый день в 03:00 ночи
+          OnCalendar=*-*-* 03:00:00
+          Persistent=true
+          Unit=backup_home@$i.service
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable and start systemd timer
+      systemd_service:
+        name: "backup_home@{{ item }}.timer"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop: "{{ user_list }}"

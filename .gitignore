@@ -1,0 +1,9 @@
+# Временные файлы Ansible
+*.retry
+.ansible/
+
+# Логи и временные файлы
+*.log
+*.swp
+
+inventory.ini
